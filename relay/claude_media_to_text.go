@@ -303,11 +303,17 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 			escapedText := strings.ReplaceAll(text, "\n", "\\n")
 			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: DESCRIBE_OUTPUT: %s", i, k, escapedText))
 
-			if b.Len() > 0 {
-				b.WriteString("\n")
-			}
 			counters.image++
-			b.WriteString(fmt.Sprintf("图片%d：%s", counters.image, text))
+			if len(mediaItems) == 1 {
+				// Single image - simple format
+				b.WriteString(fmt.Sprintf("<用户发送的图片内容>\n%s\n</用户发送的图片内容>", text))
+			} else {
+				// Multiple images - use numbered XML tags
+				if b.Len() > 0 {
+					b.WriteString("\n\n")
+				}
+				b.WriteString(fmt.Sprintf("<图片%d>\n%s\n</图片%d>", counters.image, text, counters.image))
+			}
 		}
 
 		appendix := strings.TrimRight(b.String(), "\n")
@@ -315,7 +321,13 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 			continue
 		}
 
-		newContent := baseText + "\n\n" + appendix
+		// Put image description BEFORE user text so the model "sees" the image first
+		var newContent string
+		if len(mediaItems) > 1 {
+			newContent = fmt.Sprintf("[用户发送了%d张图片，以下是每张图片的详细内容，请根据图片内容回答用户的问题]\n\n%s\n\n[用户的消息]\n%s", len(mediaItems), appendix, baseText)
+		} else {
+			newContent = appendix + "\n\n[用户的消息]\n" + baseText
+		}
 		request.Messages[i].SetStringContent(strings.TrimRight(newContent, "\n"))
 		convertedCount++
 		// Log final content on single line
