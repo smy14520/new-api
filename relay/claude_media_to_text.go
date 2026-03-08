@@ -179,10 +179,6 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 		logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] newThirdPartyMediaTextClient failed: %v", buildErr))
 		return buildErr
 	}
-	storedURLBySHA := make(map[string]string)
-	imageMaxBytes := int64(constant.MaxImageUploadMB) * 1024 * 1024
-	imagePoolMaxBytes := int64(constant.StoredImagePoolMB) * 1024 * 1024
-
 	type claudeMediaCounters struct {
 		image int
 	}
@@ -225,14 +221,29 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 				logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: image source.Type=%s, mediaType=%s, data_len=%d",
 					i, j, part.Source.Type, part.Source.MediaType, len(common.Interface2String(part.Source.Data))))
 
-				resolved, rErr := resolveClaudeImageSource(c, info, part.Source, storedURLBySHA, imageMaxBytes, imagePoolMaxBytes)
-				if rErr != nil {
-					logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: resolveClaudeImageSource failed: %v", i, j, rErr))
-					return rErr
+				// Build data URL directly from Claude image source for the third-party model call.
+				// This avoids URL accessibility issues (Content-Length missing, localhost, etc).
+				var imageDataURL string
+				switch part.Source.Type {
+				case "base64":
+					dataStr := common.Interface2String(part.Source.Data)
+					if dataStr == "" {
+						continue
+					}
+					mediaType := part.Source.MediaType
+					if mediaType == "" {
+						mediaType = "image/png"
+					}
+					imageDataURL = "data:" + mediaType + ";base64," + dataStr
+				case "url":
+					// URL source can be passed directly
+					imageDataURL = strings.TrimSpace(part.Source.Url)
+				default:
+					continue
 				}
-				if resolved != "" {
-					logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: image resolved to URL=%s", i, j, resolved))
-					mediaItems = append(mediaItems, claudeMediaURL{Kind: "image", URL: resolved})
+				if imageDataURL != "" {
+					logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: image data URL ready, len=%d", i, j, len(imageDataURL)))
+					mediaItems = append(mediaItems, claudeMediaURL{Kind: "image", URL: imageDataURL})
 				}
 			default:
 				// tool_result etc - skip silently
