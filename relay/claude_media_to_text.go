@@ -293,7 +293,7 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 				)
 			}
 
-			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: Describe returned text length=%d", i, k, len(text)))
+			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: Describe returned text length=%d, content:\n%s", i, k, len(text), text))
 
 			if b.Len() > 0 {
 				b.WriteString("\n")
@@ -310,7 +310,7 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 		newContent := baseText + "\n\n" + appendix
 		request.Messages[i].SetStringContent(strings.TrimRight(newContent, "\n"))
 		convertedCount++
-		logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: converted to text, new content length=%d", i, len(newContent)))
+		logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: converted to text, new content length=%d, FINAL CONTENT:\n%s", i, len(newContent), newContent))
 	}
 
 	logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] done, converted %d messages total", convertedCount))
