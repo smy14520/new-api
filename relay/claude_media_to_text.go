@@ -179,7 +179,6 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 		logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] newThirdPartyMediaTextClient failed: %v", buildErr))
 		return buildErr
 	}
-
 	storedURLBySHA := make(map[string]string)
 	imageMaxBytes := int64(constant.MaxImageUploadMB) * 1024 * 1024
 	imagePoolMaxBytes := int64(constant.StoredImagePoolMB) * 1024 * 1024
@@ -198,14 +197,13 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 
 		contents, parseErr := request.Messages[i].ParseContent()
 		if parseErr != nil {
-			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: ParseContent error: %v, checking if string content", i, parseErr))
+			// String content (e.g. system prompt) can't be parsed as array - this is expected
 			if request.Messages[i].IsStringContent() {
-				logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: is string content, skipping", i))
+				logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: string content, skipping", i))
 			}
 			continue
 		}
 		if len(contents) == 0 {
-			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: no content parts, skipping", i))
 			continue
 		}
 
@@ -215,36 +213,33 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 		var mediaItems []claudeMediaURL
 
 		for j, part := range contents {
-			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: type=%q", i, j, part.Type))
 			switch part.Type {
 			case dto.ContentTypeText:
 				if t := part.GetText(); t != "" {
 					textParts = append(textParts, t)
 				}
 			case "image":
-				logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: found image, source=%v", i, j, part.Source != nil))
-				if part.Source != nil {
-					logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: source.Type=%s, source.MediaType=%s, source.Url=%q, source.Data_len=%d",
-						i, j, part.Source.Type, part.Source.MediaType, part.Source.Url, len(common.Interface2String(part.Source.Data))))
+				if part.Source == nil {
+					continue
 				}
+				logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: image source.Type=%s, mediaType=%s, data_len=%d",
+					i, j, part.Source.Type, part.Source.MediaType, len(common.Interface2String(part.Source.Data))))
+
 				resolved, rErr := resolveClaudeImageSource(c, info, part.Source, storedURLBySHA, imageMaxBytes, imagePoolMaxBytes)
 				if rErr != nil {
 					logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: resolveClaudeImageSource failed: %v", i, j, rErr))
 					return rErr
 				}
 				if resolved != "" {
-					logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: image resolved to URL length=%d", i, j, len(resolved)))
+					logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: image resolved to URL=%s", i, j, resolved))
 					mediaItems = append(mediaItems, claudeMediaURL{Kind: "image", URL: resolved})
-				} else {
-					logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: image resolved to empty URL, skipping", i, j))
 				}
 			default:
-				logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d part %d: unhandled type=%q", i, j, part.Type))
+				// tool_result etc - skip silently
 			}
 		}
 
 		if len(mediaItems) == 0 {
-			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: no media items found, skipping", i))
 			continue
 		}
 
@@ -263,7 +258,7 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 		// Call third-party model to describe each image
 		var b strings.Builder
 		for k, item := range mediaItems {
-			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: calling Describe(kind=%s, url_len=%d)", i, k, item.Kind, len(item.URL)))
+			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: calling Describe(kind=%s, url=%s)", i, k, item.Kind, item.URL))
 
 			// Wrap Describe in recover to capture panic stack trace instead of crashing
 			var text string
@@ -272,7 +267,7 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 				defer func() {
 					if r := recover(); r != nil {
 						stack := string(debug.Stack())
-						logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] PANIC in Describe: %v\nStack:\n%s", r, stack))
+						logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] PANIC in Describe: %v Stack: %s", r, strings.ReplaceAll(stack, "\n", " | ")))
 						descErr = fmt.Errorf("panic in third-party model Describe: %v", r)
 					}
 				}()
@@ -293,7 +288,9 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 				)
 			}
 
-			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: Describe returned text length=%d, content:\n%s", i, k, len(text), text))
+			// Log describe output on single line (replace newlines with \\n to avoid grep truncation)
+			escapedText := strings.ReplaceAll(text, "\n", "\\n")
+			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: DESCRIBE_OUTPUT: %s", i, k, escapedText))
 
 			if b.Len() > 0 {
 				b.WriteString("\n")
@@ -310,7 +307,9 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 		newContent := baseText + "\n\n" + appendix
 		request.Messages[i].SetStringContent(strings.TrimRight(newContent, "\n"))
 		convertedCount++
-		logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: converted to text, new content length=%d, FINAL CONTENT:\n%s", i, len(newContent), newContent))
+		// Log final content on single line
+		escapedFinal := strings.ReplaceAll(newContent, "\n", "\\n")
+		logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d: FINAL_CONTENT(%d chars): %s", i, len(newContent), escapedFinal))
 	}
 
 	logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] done, converted %d messages total", convertedCount))
