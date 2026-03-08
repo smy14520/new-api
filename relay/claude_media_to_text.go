@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -263,7 +264,21 @@ func applyClaudeThirdPartyModelMediaToText(c *gin.Context, info *relaycommon.Rel
 		var b strings.Builder
 		for k, item := range mediaItems {
 			logger.LogInfo(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: calling Describe(kind=%s, url_len=%d)", i, k, item.Kind, len(item.URL)))
-			text, descErr := client.Describe(item.Kind, item.URL)
+
+			// Wrap Describe in recover to capture panic stack trace instead of crashing
+			var text string
+			var descErr error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						stack := string(debug.Stack())
+						logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] PANIC in Describe: %v\nStack:\n%s", r, stack))
+						descErr = fmt.Errorf("panic in third-party model Describe: %v", r)
+					}
+				}()
+				text, descErr = client.Describe(item.Kind, item.URL)
+			}()
+
 			if descErr != nil {
 				logger.LogError(c, fmt.Sprintf("[claude-multimodal-3rd] message %d image %d: Describe failed: %v", i, k, descErr))
 				return types.NewError(descErr, types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
