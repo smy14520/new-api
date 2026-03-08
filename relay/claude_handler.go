@@ -41,6 +41,26 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		return types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
+	// Channel-level multimodal handling for text-only upstream models (Claude format).
+	mediaMode, modeOK := info.ChannelOtherSettings.ParseImageAutoConvertToURLMode()
+	if !modeOK {
+		return types.NewErrorWithStatusCode(fmt.Errorf("invalid image_auto_convert_to_url_mode: %q", info.ChannelOtherSettings.ImageAutoConvertToURLMode), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if mediaMode != dto.ImageAutoConvertToURLModeOff {
+		switch mediaMode {
+		case dto.ImageAutoConvertToURLModeMCP:
+			if convErr := applyClaudeMediaToURL(c, info, request); convErr != nil {
+				return convErr
+			}
+		case dto.ImageAutoConvertToURLModeThirdPartyModel:
+			if convErr := applyClaudeThirdPartyModelMediaToText(c, info, request); convErr != nil {
+				return convErr
+			}
+		default:
+			return types.NewErrorWithStatusCode(fmt.Errorf("unsupported image_auto_convert_to_url_mode: %s", mediaMode), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
+	}
+
 	adaptor := GetAdaptor(info.ApiType)
 	if adaptor == nil {
 		return types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
@@ -110,8 +130,16 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
+	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	passThroughBody := info.ChannelSetting.PassThroughBodyEnabled
+	// Media handling rewrites the structured request; pass-through body would bypass it.
+	if mediaMode != dto.ImageAutoConvertToURLModeOff {
+		passThroughGlobal = false
+		passThroughBody = false
+	}
+
 	var requestBody io.Reader
-	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
+	if passThroughGlobal || passThroughBody {
 		body, err := common.GetRequestBody(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
