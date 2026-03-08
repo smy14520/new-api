@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
@@ -46,19 +47,30 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 	if !modeOK {
 		return types.NewErrorWithStatusCode(fmt.Errorf("invalid image_auto_convert_to_url_mode: %q", info.ChannelOtherSettings.ImageAutoConvertToURLMode), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
+	logger.LogInfo(c, fmt.Sprintf("[claude-multimodal] ClaudeHelper entered, model=%s, mediaMode=%q, messageCount=%d, channelId=%d",
+		request.Model, mediaMode, len(request.Messages), info.ChannelId))
 	if mediaMode != dto.ImageAutoConvertToURLModeOff {
+		logger.LogInfo(c, fmt.Sprintf("[claude-multimodal] mediaMode is active: %q, will process Claude messages", mediaMode))
 		switch mediaMode {
 		case dto.ImageAutoConvertToURLModeMCP:
+			logger.LogInfo(c, "[claude-multimodal] entering MCP mode: applyClaudeMediaToURL")
 			if convErr := applyClaudeMediaToURL(c, info, request); convErr != nil {
+				logger.LogError(c, fmt.Sprintf("[claude-multimodal] applyClaudeMediaToURL failed: %v", convErr))
 				return convErr
 			}
+			logger.LogInfo(c, "[claude-multimodal] applyClaudeMediaToURL completed successfully")
 		case dto.ImageAutoConvertToURLModeThirdPartyModel:
+			logger.LogInfo(c, "[claude-multimodal] entering third_party_model mode: applyClaudeThirdPartyModelMediaToText")
 			if convErr := applyClaudeThirdPartyModelMediaToText(c, info, request); convErr != nil {
+				logger.LogError(c, fmt.Sprintf("[claude-multimodal] applyClaudeThirdPartyModelMediaToText failed: %v", convErr))
 				return convErr
 			}
+			logger.LogInfo(c, "[claude-multimodal] applyClaudeThirdPartyModelMediaToText completed successfully")
 		default:
 			return types.NewErrorWithStatusCode(fmt.Errorf("unsupported image_auto_convert_to_url_mode: %s", mediaMode), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+	} else {
+		logger.LogInfo(c, "[claude-multimodal] mediaMode is off, skipping multimodal processing")
 	}
 
 	adaptor := GetAdaptor(info.ApiType)

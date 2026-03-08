@@ -87,7 +87,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         to: '/log',
       },
       {
-        text: t('多模态文件'),
+        text: t('多模态文件3'),
         itemKey: 'multimodal_files',
         to: '/multimodal-files',
       },
