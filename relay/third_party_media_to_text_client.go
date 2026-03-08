@@ -69,7 +69,8 @@ func newThirdPartyMediaTextClient(parent *gin.Context, ch *model.Channel, cfg th
 
 	w := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(w)
-	ctx.Request, _ = http.NewRequest(http.MethodPost, "/internal/third_party_multimodal", nil)
+	ctx.Request, _ = http.NewRequest(http.MethodPost, "/internal/third_party_multimodal", http.NoBody)
+	ctx.Request.Header.Set("Content-Type", "application/json")
 	if parent != nil && parent.Request != nil {
 		ctx.Request.RemoteAddr = parent.Request.RemoteAddr
 	}
